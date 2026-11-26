@@ -6,6 +6,8 @@ const page=fs.readFileSync(__dirname+'/index.html','utf8').replace('<script>','<
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 const limits={capital:[0,1e12],income:[0,1e12],expenses:[0,1e12],months:[1,24],debt:[0,1e12],yield:[0,30],inflation:[0,30],interestTax:[0,100],risk:[0,80],years:[0,50],deploy:[0,100],gain:[-100,10000],exitTax:[0,100],fees:[0,1e12]};
 for(let i=0;i<5;i++){limits['drop'+i]=[0,100];limits['profit'+i]=[-100,10000]}
+for(const k of ["health","auto","property","disability","life","liability","rental","business"]){limits['ins_'+k]=[0,3];limits['cost_'+k]=[0,1e9];limits['cover_'+k]=[0,1e12];limits['need_'+k]=[0,1e12]}
+
 function clean(x){if(!x||typeof x!=='object'||Array.isArray(x))throw Error('Invalid plan');const out={};for(const [k,[lo,hi]] of Object.entries(limits)){if(x[k]===undefined)continue;const v=x[k];if(typeof v!=='number'||!Number.isFinite(v)||v<lo||v>hi)throw Error('Invalid '+k);out[k]=v}if(typeof x.insured==='boolean')out.insured=x.insured;if(typeof x.asset==='string'&&x.asset.length<50)out.asset=x.asset;return out}
 function json(res,status,data,headers={}){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...headers});res.end(JSON.stringify(data))}
 async function body(req){let size=0,parts=[];for await(const c of req){size+=c.length;if(size>16384)throw Error('Request too large');parts.push(c)}return JSON.parse(Buffer.concat(parts).toString('utf8')||'{}')}
