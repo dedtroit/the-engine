@@ -71,5 +71,37 @@ let lo=0,hi=Math.max(1,finite(i.monthly));while(hi<1e7&&!works(hi))hi*=2;if(work
 }
 return{base,stress,selected,children,target,monthlyFamily:Math.max(0,finite(i.monthly))*children,premiumFamily:premium*children,baseFunded:success(base),stressFunded:success(stress)}
 }
-return {calculate,historicalRanges,taxCompare,legacy,legacyPlan};
+
+/* IRS Rev Proc 2025-32 and 2026-48 IRB, individual regular income tax.
+   Arrays: standard deduction, six ordinary bracket ceilings, 0%/15% LTCG ceilings, NIIT threshold. */
+const TAX_RULES={
+2026:[
+[16100,[12400,50400,105700,201775,256225,640600],49450,545500,200000],
+[32200,[24800,100800,211400,403550,512450,768700],98900,613700,250000],
+[24150,[17700,67450,105700,201750,256200,640600],66200,579600,200000],
+[16100,[12400,50400,105700,201775,256225,384350],49450,306850,125000]],
+2027:[
+[16600,[12800,52025,109125,208325,264550,661375],51050,563200,200000],
+[33200,[25600,104050,218250,416650,529100,793650],102100,633600,250000],
+[24925,[18250,69650,109100,208300,264550,661350],68350,598400,200000],
+[16600,[12800,52025,109125,208325,264550,396825],51050,316800,125000]]};
+function progressiveTax(amount,ceilings){let tax=0,lo=0;const rates=[.10,.12,.22,.24,.32,.35,.37];for(let k=0;k<rates.length;k++){const hi=ceilings[k]??Infinity;tax+=Math.max(0,Math.min(amount,hi)-lo)*rates[k];lo=hi}return tax}
+function individualTax(i){
+const year=Number(i.year)===2027?2027:2026,status=Math.round(clamp(i.status,0,3)),[standard,brackets,zeroCap,fifteenCap,threshold]=TAX_RULES[year][status],deduction=i.useCustomDeduction?Math.max(0,finite(i.deductions)):standard;
+let short=finite(i.short),long=finite(i.long);if(short>0&&long<0){const offset=Math.min(short,-long);short-=offset;long+=offset}else if(long>0&&short<0){const offset=Math.min(long,-short);long-=offset;short+=offset}
+const netLoss=Math.max(0,-short-long),lossDeduction=Math.min(netLoss,status===3?1500:3000),ordinaryGain=Math.max(0,short),longGain=Math.max(0,long),qualified=Math.max(0,finite(i.qualified)),preferred=longGain+qualified,ordinaryBeforeDeduction=finite(i.income)+ordinaryGain-lossDeduction,agi=ordinaryBeforeDeduction+preferred,taxable=Math.max(0,agi-deduction),ordinary=Math.min(taxable,Math.max(0,ordinaryBeforeDeduction-deduction)),prefTaxable=Math.max(0,taxable-ordinary);
+const atZero=Math.min(prefTaxable,Math.max(0,zeroCap-ordinary)),atFifteen=Math.min(prefTaxable-atZero,Math.max(0,fifteenCap-Math.max(ordinary,zeroCap))),atTwenty=Math.max(0,prefTaxable-atZero-atFifteen),ordinaryTax=progressiveTax(ordinary,brackets),regular=Math.min(progressiveTax(taxable,brackets),ordinaryTax+.15*atFifteen+.20*atTwenty);
+const nii=Math.max(0,finite(i.otherNii)+qualified+ordinaryGain+longGain-lossDeduction),niit=.038*Math.min(nii,Math.max(0,agi+Math.max(0,finite(i.magiAdjustment))-threshold));
+return{year,status,standard,deduction,agi,taxable,ordinary,ordinaryTax,regular,niit,total:regular+niit,atZero,atFifteen,atTwenty,lossDeduction,unusedNetLoss:Math.max(0,netLoss-lossDeduction),zeroRoom:Math.max(0,zeroCap-taxable),ordinaryGain,longGain,netLoss}
+}
+function taxPlanner(i){
+const proceeds=Math.max(0,finite(i.proceeds)),basis=Math.max(0,finite(i.basis)),cost=Math.max(0,finite(i.cost)),gain=proceeds-basis-cost,otherShort=finite(i.short),otherLong=finite(i.long),lossShort=Math.max(0,finite(i.lossShort)),lossLong=Math.max(0,finite(i.lossLong)),stateRate=clamp(i.stateRate,0,100)/100,stateIncluded=!!i.stateIncluded;
+const base=individualTax({...i,short:otherShort,long:otherLong}),baseAfterLoss=individualTax({...i,short:otherShort-lossShort,long:otherLong-lossLong});
+function calc(heldLong,offsets){const t=individualTax({...i,short:otherShort+(heldLong?0:gain)-(offsets?lossShort:0),long:otherLong+(heldLong?gain:0)-(offsets?lossLong:0)}),fed=t.total-base.total,state=stateIncluded?(t.agi-base.agi)*stateRate:0,combined=fed+state,saleFed=t.total-(offsets?baseAfterLoss.total:base.total),saleState=stateIncluded?(t.agi-(offsets?baseAfterLoss.agi:base.agi))*stateRate:0,saleTax=saleFed+saleState;
+return {...t,federalChange:fed,stateChange:state,combinedChange:combined,saleTax,saleFed,saleState,cashToKeep:proceeds-cost-Math.max(0,saleTax),saleNetGain:gain-saleTax}}
+const short=calc(false,false),long=calc(true,false),shortOffset=calc(false,true),longOffset=calc(true,true),heldLong=!!i.heldLong,actual=heldLong?longOffset:shortOffset,noOffsets=heldLong?long:short;
+return{gain,proceeds,basis,cost,base,baseAfterLoss,actual,short,long,shortOffset,longOffset,heldLong,stateIncluded,holdSavings:shortOffset.combinedChange-longOffset.combinedChange,lossSavings:noOffsets.combinedChange-actual.combinedChange,zeroRoom:baseAfterLoss.zeroRoom,combinedSavings:short.combinedChange-longOffset.combinedChange}
+}
+
+return {calculate,historicalRanges,taxCompare,taxPlanner,individualTax,legacy,legacyPlan};
 });
