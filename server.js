@@ -6,7 +6,7 @@ const pool=new Pool({connectionString:process.env.DATABASE_URL,connectionTimeout
 const page=fs.readFileSync(__dirname+'/index.html','utf8').replace('<script>','<script>window.ENGINE_CLOUD=true;</script><script>');
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 const limits={capital:[0,1e12],income:[0,1e12],expenses:[0,1e12],months:[1,24],debt:[0,1e12],yield:[0,30],inflation:[0,30],interestTax:[0,100],risk:[0,80],years:[0,50],deploy:[0,100],gain:[-100,10000],exitTax:[0,100],fees:[0,1e12]};
-Object.assign(limits,{spendGrowth:[0,30],incomeGrowth:[-20,30],distribution:[0,30],useIncome:[0,1],scenario:[0,5],historyStart:[1900,2100]});
+Object.assign(limits,{spendGrowth:[0,30],incomeGrowth:[-20,30],distribution:[0,30],useIncome:[0,1],scenario:[0,5],previewRisk:[0,1],taxBasis:[0,1e12],taxProceeds:[0,1e12],taxCosts:[0,1e12],taxLoss:[0,1e12],taxOrdinary:[0,100],taxLong:[0,100],taxState:[0,100],taxNiit:[0,3.8],legacyInitial:[0,1e12],legacyMonthly:[0,1e9],legacyFundYears:[0,80],legacyDelay:[0,50],legacyYears:[1,80],legacyPremium:[0,1e9],legacyReturn:[-99,100],legacyTax:[0,100],legacyAdmin:[0,1e9],legacyPolicyYears:[1,80],legacyIllustration:[0,1e12],legacyStress:[0,1],historyStart:[1900,2100]});
 for(let i=0;i<5;i++){limits['drop'+i]=[0,100];limits['profit'+i]=[-100,10000]}
 for(const k of ["health","auto","property","disability","life","liability","rental","business"]){limits['ins_'+k]=[0,3];limits['cost_'+k]=[0,1e9];limits['cover_'+k]=[0,1e12];limits['need_'+k]=[0,1e12]}
 
