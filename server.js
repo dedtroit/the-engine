@@ -1,10 +1,12 @@
 'use strict';
 const http=require('node:http'),fs=require('node:fs'),crypto=require('node:crypto'),{promisify}=require('node:util'),{Pool}=require('pg');
 const scrypt=promisify(crypto.scrypt);
+const {getMarkets}=require('./markets');const engine=require('./engine');
 const pool=new Pool({connectionString:process.env.DATABASE_URL,connectionTimeoutMillis:5000,max:8});
 const page=fs.readFileSync(__dirname+'/index.html','utf8').replace('<script>','<script>window.ENGINE_CLOUD=true;</script><script>');
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 const limits={capital:[0,1e12],income:[0,1e12],expenses:[0,1e12],months:[1,24],debt:[0,1e12],yield:[0,30],inflation:[0,30],interestTax:[0,100],risk:[0,80],years:[0,50],deploy:[0,100],gain:[-100,10000],exitTax:[0,100],fees:[0,1e12]};
+Object.assign(limits,{spendGrowth:[0,30],incomeGrowth:[-20,30],distribution:[0,30],useIncome:[0,1],scenario:[0,4],historyStart:[1900,2100]});
 for(let i=0;i<5;i++){limits['drop'+i]=[0,100];limits['profit'+i]=[-100,10000]}
 for(const k of ["health","auto","property","disability","life","liability","rental","business"]){limits['ins_'+k]=[0,3];limits['cost_'+k]=[0,1e9];limits['cover_'+k]=[0,1e12];limits['need_'+k]=[0,1e12]}
 
@@ -20,6 +22,9 @@ async function handle(req,res){res.setHeader('X-Content-Type-Options','nosniff')
 const path=new URL(req.url,'http://localhost').pathname;
 if(path==='/health'){await pool.query('SELECT 1');return json(res,200,{ok:true})}
 if(req.method==='GET'&&(path==='/'||path==='/index.html'||path==='/app/')){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(page)}
+if(req.method==='GET'&&path==='/engine.js'){res.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-cache'});return res.end(fs.readFileSync(__dirname+'/engine.js'))}
+if(req.method==='GET'&&path==='/api/markets')return json(res,200,await getMarkets());
+if(req.method==='POST'&&path==='/api/simulate'){if(req.headers.origin!=='https://'+req.headers.host)return json(res,403,{error:'Invalid origin'});return json(res,200,engine.calculate(await body(req)))}
 if(!path.startsWith('/api/'))return json(res,404,{error:'Not found'});
 if(req.method!=='GET'){const origin=req.headers.origin; if(!origin||origin!=='https://'+req.headers.host)return json(res,403,{error:'Invalid origin'});if(!String(req.headers['content-type']||'').startsWith('application/json'))return json(res,415,{error:'JSON required'})}
 if(req.method==='POST'&&(path==='/api/register'||path==='/api/login')){
