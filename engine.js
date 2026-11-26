@@ -53,9 +53,9 @@ if(started){dueYears++;premiumPaid=Math.min(buffer,premium);buffer-=premiumPaid;
 else paused++;
 }
 const marketNet=portfolio-Math.max(0,portfolio-basis)*tax,compNet=comparison-Math.max(0,comparison-compBasis)*tax;
-rows.push({year:y,portfolio,buffer,totalPremium,paidYears,dueYears,unfunded,comparison,marketNet,compNet,contributed,growth,premiumPaid,taxThisYear,policyYear:started?y-startYear+1:0})
+rows.push({year:y,portfolio,buffer,totalPremium,paidYears,dueYears,unfunded,comparison,marketNet,compNet,contributed,growth,premiumPaid,taxThisYear,policyYear:started?y-startYear:0})
 }
-const last=rows.at(-1),policyAge=started?years-startYear+1:0,quoteAge=Math.round(finite(i.quoteAge,-1)),quoteDuration=Math.round(finite(i.quoteDuration,-1)),issueAge=Math.round(finite(i.childAge,0))+Math.max(0,(startYear??1)-1);
+const last=rows.at(-1),policyAge=started?years-startYear:0,quoteAge=Math.round(finite(i.quoteAge,-1)),quoteDuration=Math.round(finite(i.quoteDuration,-1)),issueAge=Math.round(finite(i.childAge,0))+Math.max(0,startYear??0);
 // Only use carrier values when the modeled start age and exact policy duration match the supplied quote.
 const matches=started&&!policyRisk&&quoteAge===issueAge&&quoteDuration===policyAge&&i.quoteConfirmed===true;
 const guaranteed=matches&&finite(i.illustration)>0?finite(i.illustration):null,current=matches&&finite(i.currentValue)>0?finite(i.currentValue):null,death=matches&&finite(i.deathBenefit)>0?finite(i.deathBenefit):null;
