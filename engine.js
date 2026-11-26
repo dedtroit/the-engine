@@ -3,7 +3,7 @@
 const finite=(v,d=0)=>Number.isFinite(Number(v))?Number(v):d,clamp=(n,min,max)=>Math.max(min,Math.min(max,finite(n))), rate=(n)=>clamp(n,-99,1000)/100;
 function calculate(input){
 const c=Math.max(0,finite(input.capital)),months=Math.max(1,Math.min(600,Math.round(finite(input.years,5)*12))), years=months/12,protect=Math.min(c,Math.max(0,finite(input.protect))),budget=Math.min(c-protect,Math.max(0,finite(input.budget))),deploy=budget*clamp(input.deploy,0,100)/100,initialCash=c-deploy,interestTax=clamp(input.interestTax,0,100)/100,exitTax=clamp(input.exitTax,0,100)/100,spendGrowth=rate(input.spendGrowth),incomeGrowth=rate(input.incomeGrowth),cpi=rate(input.inflation),baseIncome=Math.max(0,finite(input.income)),baseSpend=Math.max(0,finite(input.expenses)),reserveYield=clamp(input.yield,0,30)/100,dist=clamp(input.distribution,0,30)/100,fee=Math.max(0,finite(input.fees)),useIncome=!!input.useIncome;
-let cash=initialCash,asset=deploy,basis=deploy,totalTaxes=0,totalSpend=0,totalIncome=0,totalContributions=0,shortfall=0,interestEarned=0,distributionEarned=0,peak=c,maxDD=0,breach=false,history=[{month:0,nominal:c,real:c,benchmark:c,protected:protect}],benchmark=c,benchmarkShortfall=0,benchTax=0;
+let cash=initialCash,asset=deploy,basis=deploy,totalTaxes=0,totalSpend=0,totalIncome=0,totalContributions=0,shortfall=0,interestEarned=0,distributionEarned=0,peak=c,maxDD=0,assetIndex=1,assetPeak=1,assetDD=0,feesPaid=0,deposits=0,withdrawals=0,assetPriceGain=0,breach=false,history=[{month:0,nominal:c,real:c,benchmark:c,protected:protect}],benchmark=c,benchmarkShortfall=0,benchTax=0;
 const path=Array.isArray(input.path)?input.path:[],rf=Array.isArray(input.reservePath)?input.reservePath:[],cp=Array.isArray(input.inflationPath)?input.inflationPath:[];
 const totalGain=clamp(input.gain,-100,10000)/100,step=totalGain===-1?-1:Math.pow(1+totalGain,1/months)-1;
 let priceIndex=1,personalIndex=1,yearOneInvestmentIncome=0,yearOneSpending=0,yearOneIncome=0,contributedReal=0;
@@ -17,19 +17,18 @@ const distGross=Math.max(0,asset)*dist/12, taxD=distGross*interestTax,netD=distG
 cash+=netI+netD;totalTaxes+=taxI+taxD;interestEarned+=netI;distributionEarned+=netD;
 const bGross=Math.max(0,benchmark-protect)*mr,bTax=bGross*interestTax;benchmark+=bGross-bTax;benchTax+=bTax;
 if(i<12){yearOneInvestmentIncome+=netI+netD;yearOneSpending+=spend;yearOneIncome+=income}
-const flow=useIncome?income-spend:0;totalContributions+=flow;contributedReal+=flow/priceIndex;
-if(flow<0&&cash+flow<0){shortfall+=-(cash+flow);cash=0}else cash+=flow;
+const flow=useIncome?income-spend:0,actualFlow=Math.max(-cash,flow);totalContributions+=actualFlow;contributedReal+=actualFlow/priceIndex;deposits+=Math.max(0,actualFlow);withdrawals+=Math.max(0,-actualFlow);shortfall+=Math.max(0,actualFlow-flow);cash+=actualFlow;
 if(flow<0&&benchmark+flow<0){benchmarkShortfall+=-(benchmark+flow);benchmark=0}else benchmark+=flow;
 if(cash<protect*personalIndex)breach=true;
-const change=Number.isFinite(path[i])?Math.max(-1,path[i]):step;asset*=1+change;
+const change=Number.isFinite(path[i])?Math.max(-1,path[i]):step;assetPriceGain+=asset*change;asset*=1+change;assetIndex*=1+change;assetPeak=Math.max(assetPeak,assetIndex);assetDD=Math.max(assetDD,1-assetIndex/assetPeak);
 priceIndex*=1+inf;personalIndex*=Math.pow(1+spendGrowth,1/12);
 let nav=cash+asset;
 peak=Math.max(peak,nav);maxDD=peak>0?Math.max(maxDD,1-nav/peak):0;
-if(i===months-1){const tradeCost=deploy>0?Math.min(fee,asset):0, gain=asset-basis-tradeCost,taxG=Math.max(0,gain)*exitTax;totalTaxes+=taxG;cash+=Math.max(0,asset-tradeCost-taxG);asset=0;nav=cash}
+if(i===months-1){const tradeCost=deploy>0?Math.min(fee,asset):0, gain=asset-basis-tradeCost,taxG=Math.max(0,gain)*exitTax;totalTaxes+=taxG;feesPaid=tradeCost;cash+=Math.max(0,asset-tradeCost-taxG);asset=0;nav=cash}
 history.push({month:i+1,nominal:nav,real:nav/priceIndex,benchmark,protected:protect*personalIndex});
 }
 const nominal=cash,real=nominal/priceIndex,realGain=real-c-contributedReal,benchmarkReal=benchmark/priceIndex,yearlySpend=yearOneSpending,yearlyIncome=yearOneIncome,coverage=yearlySpend>0?yearOneInvestmentIncome/yearlySpend:null,afterTaxReserve=reserveYield*(1-interestTax),realReserve=(1+afterTaxReserve)/(1+cpi)-1,requiredYield=interestTax<1?Math.max(0,cpi/(1-interestTax)):null,annualSpend=baseSpend*12,requiredCapital=afterTaxReserve>0?annualSpend/afterTaxReserve:null, netIncomeGap=yearlyIncome+yearOneInvestmentIncome-yearlySpend;
-return {months,years,deploy,nominal,real,realGain,benchmark,benchmarkReal,delta:nominal-benchmark,totalTaxes,totalSpend,totalIncome,totalContributions,contributedReal,shortfall,benchmarkShortfall,interestEarned,distributionEarned,coverage,yearOneInvestmentIncome,yearlySpend,yearlyIncome,netIncomeGap,realReserve,requiredYield,requiredCapital,maxDD,breach,history,inflationFactor:priceIndex,benchTax,afterTaxReserve};
+const netInvestmentGain=nominal-c-totalContributions,grossInvestmentGain=netInvestmentGain+totalTaxes+feesPaid;return {months,years,startingCapital:c,deploy,nominal,real,realGain,benchmark,benchmarkReal,delta:nominal-benchmark,totalTaxes,totalSpend,totalIncome,totalContributions,deposits,withdrawals,feesPaid,netInvestmentGain,grossInvestmentGain,assetPriceGain,assetDrawdown:deploy>0?assetDD:null,contributedReal,shortfall,benchmarkShortfall,interestEarned,distributionEarned,coverage,yearOneInvestmentIncome,yearlySpend,yearlyIncome,netIncomeGap,realReserve,requiredYield,requiredCapital,maxDD,breach,history,inflationFactor:priceIndex,benchTax,afterTaxReserve};
 }
 
 function historicalRanges(rows,years){const n=Math.max(1,Math.round(years*12)),samples=[];for(let i=0;i+n<rows.length;i++){const first=rows[i],last=rows[i+n],month=r=>Number(r.date.slice(0,4))*12+Number(r.date.slice(5,7));if(month(last)-month(first)!==n||first.value<=0||last.value<=0)continue;samples.push({gain:(last.value/first.value-1)*100,path:rows.slice(i+1,i+n+1).map((r,j)=>r.value/rows[i+j].value-1),from:first.date,to:last.date})}samples.sort((a,b)=>a.gain-b.gain);if(!samples.length)return null;const pick=p=>samples[Math.round((samples.length-1)*p)];return{count:samples.length,low:pick(.2),middle:pick(.5),high:pick(.8),first:rows[0].date,last:rows.at(-1).date}}
