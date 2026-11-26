@@ -1,0 +1,35 @@
+'use strict';
+const http=require('node:http'),fs=require('node:fs'),crypto=require('node:crypto'),{promisify}=require('node:util'),{Pool}=require('pg');
+const scrypt=promisify(crypto.scrypt);
+const pool=new Pool({connectionString:process.env.DATABASE_URL,connectionTimeoutMillis:5000,max:8});
+const page=fs.readFileSync(__dirname+'/index.html','utf8').replace('<script>','<script>window.ENGINE_CLOUD=true;</script><script>');
+const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
+const limits={capital:[0,1e12],income:[0,1e12],expenses:[0,1e12],months:[1,24],debt:[0,1e12],yield:[0,30],inflation:[0,30],interestTax:[0,100],risk:[0,80],years:[0,50],deploy:[0,100],gain:[-100,10000],exitTax:[0,100],fees:[0,1e12]};
+for(let i=0;i<5;i++){limits['drop'+i]=[0,100];limits['profit'+i]=[-100,10000]}
+function clean(x){if(!x||typeof x!=='object'||Array.isArray(x))throw Error('Invalid plan');const out={};for(const [k,[lo,hi]] of Object.entries(limits)){if(x[k]===undefined)continue;const v=x[k];if(typeof v!=='number'||!Number.isFinite(v)||v<lo||v>hi)throw Error('Invalid '+k);out[k]=v}if(typeof x.insured==='boolean')out.insured=x.insured;if(typeof x.asset==='string'&&x.asset.length<50)out.asset=x.asset;return out}
+function json(res,status,data,headers={}){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...headers});res.end(JSON.stringify(data))}
+async function body(req){let size=0,parts=[];for await(const c of req){size+=c.length;if(size>16384)throw Error('Request too large');parts.push(c)}return JSON.parse(Buffer.concat(parts).toString('utf8')||'{}')}
+function token(req){return (req.headers.cookie||'').match(/(?:^|; *)engine_session=([a-f0-9]{64})(?:;|$)/)?.[1]}
+const cookie=(value,age)=>'engine_session='+value+'; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age='+age;
+async function user(req){const t=token(req);if(!t)return null;const r=await pool.query('SELECT u.id,u.email FROM engine_sessions s JOIN engine_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now()',[hash(t)]);return r.rows[0]||null}
+async function session(res,id){const t=crypto.randomBytes(32).toString('hex');await pool.query('DELETE FROM engine_sessions WHERE expires_at<now()');await pool.query("INSERT INTO engine_sessions(token_hash,user_id,expires_at) VALUES($1,$2,now()+interval '30 days')",[hash(t),id]);json(res,200,{ok:true},{'Set-Cookie':cookie(t,2592000)})}
+const attempts=new Map();function allowed(req){const now=Date.now(),key=(req.headers['x-real-ip']||req.socket.remoteAddress||'unknown').toString();if(attempts.size>20000)for(const [k,v] of attempts)if(v.until<now)attempts.delete(k);let v=attempts.get(key);if(!v||v.until<now){v={n:0,until:now+600000};attempts.set(key,v)}return ++v.n<=15}
+async function handle(req,res){res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Frame-Options','DENY');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+const path=new URL(req.url,'http://localhost').pathname;
+if(path==='/health'){await pool.query('SELECT 1');return json(res,200,{ok:true})}
+if(req.method==='GET'&&(path==='/'||path==='/index.html'||path==='/app/')){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(page)}
+if(!path.startsWith('/api/'))return json(res,404,{error:'Not found'});
+if(req.method!=='GET'){const origin=req.headers.origin; if(!origin||origin!=='https://'+req.headers.host)return json(res,403,{error:'Invalid origin'});if(!String(req.headers['content-type']||'').startsWith('application/json'))return json(res,415,{error:'JSON required'})}
+if(req.method==='POST'&&(path==='/api/register'||path==='/api/login')){
+if(!allowed(req))return json(res,429,{error:'Too many attempts. Try again later.'});const b=await body(req),email=String(b.email||'').trim().toLowerCase(),password=b.password;
+if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254||typeof password!=='string'||password.length<12||password.length>128)return json(res,400,{error:'Use a valid email and password of 12 to 128 characters.'});
+if(path==='/api/register'){const salt=crypto.randomBytes(16).toString('hex'),key=(await scrypt(password,salt,64)).toString('hex');const r=await pool.query('INSERT INTO engine_users(email,salt,password_hash) VALUES($1,$2,$3) ON CONFLICT(email) DO NOTHING RETURNING id',[email,salt,key]);if(!r.rowCount)return json(res,409,{error:'Account unavailable. Try signing in.'});return session(res,r.rows[0].id)}
+const r=await pool.query('SELECT id,salt,password_hash FROM engine_users WHERE email=$1',[email]),u=r.rows[0],key=await scrypt(password,u?.salt||'00000000000000000000000000000000',64);if(!u||!crypto.timingSafeEqual(key,Buffer.from(u.password_hash,'hex')))return json(res,401,{error:'Incorrect email or password.'});return session(res,u.id)
+}
+if(req.method==='POST'&&path==='/api/logout'){const t=token(req);if(t)await pool.query('DELETE FROM engine_sessions WHERE token_hash=$1',[hash(t)]);return json(res,200,{ok:true},{'Set-Cookie':cookie('',0)})}
+const u=await user(req);if(!u)return json(res,401,{error:'Sign in required'});
+if(req.method==='GET'&&path==='/api/plan'){const r=await pool.query('SELECT data,updated_at FROM engine_plans WHERE user_id=$1',[u.id]);return json(res,200,{email:u.email,plan:r.rows[0]?.data||null,updatedAt:r.rows[0]?.updated_at||null})}
+if(req.method==='PUT'&&path==='/api/plan'){let data;try{data=clean(await body(req))}catch(e){return json(res,400,{error:e.message})}const r=await pool.query('INSERT INTO engine_plans(user_id,data) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO UPDATE SET data=EXCLUDED.data,updated_at=now() RETURNING updated_at',[u.id,JSON.stringify(data)]);return json(res,200,{ok:true,updatedAt:r.rows[0].updated_at})}
+return json(res,404,{error:'Not found'})}
+async function start(){if(!process.env.DATABASE_URL)throw Error('DATABASE_URL required');for(let i=0;i<30;i++){try{await pool.query('CREATE TABLE IF NOT EXISTS engine_users(id BIGSERIAL PRIMARY KEY,email TEXT UNIQUE NOT NULL,salt TEXT NOT NULL,password_hash TEXT NOT NULL); CREATE TABLE IF NOT EXISTS engine_sessions(token_hash TEXT PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES engine_users(id) ON DELETE CASCADE,expires_at TIMESTAMPTZ NOT NULL); CREATE TABLE IF NOT EXISTS engine_plans(user_id BIGINT PRIMARY KEY REFERENCES engine_users(id) ON DELETE CASCADE,data JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now())');break}catch(e){if(i===29)throw e;await new Promise(r=>setTimeout(r,2000))}}http.createServer((req,res)=>handle(req,res).catch(e=>{console.error('Request failed:',e.code||e.name);if(!res.headersSent)json(res,500,{error:'Unable to complete request. Try again.'});else res.end()})).listen(Number(process.env.PORT)||8080,'0.0.0.0',()=>console.log('The Engine ready'))}
+start().catch(e=>{console.error('Startup failed:',e.code||e.message);process.exit(1)});
